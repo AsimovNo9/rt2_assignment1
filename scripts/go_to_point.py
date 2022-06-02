@@ -2,11 +2,14 @@
 
 
 import rospy
+import actionlib
 from geometry_msgs.msg import Twist, Point
 from nav_msgs.msg import Odometry
 from tf import transformations
 from rt2_assignment1.srv import Position
 import math
+
+from rt2_assignment1.msg import GoToPointAction, GoToPointFeedback, GoToPointResult
 
 # robot state variables
 position_ = Point()
@@ -24,6 +27,10 @@ kp_d = 0.2
 ub_a = 0.6
 lb_a = -0.5
 ub_d = 0.6
+
+# action server feedback and result
+backfeed_ = GoToPointFeedback()
+result_ = GoToPointResult()
 
 def clbk_odom(msg):
     global position_
@@ -125,23 +132,38 @@ def go_to_point(req):
     des_yaw = req.theta
     change_state(0)
     while True:
-    	if state_ == 0:
-    		fix_yaw(desired_position)
-    	elif state_ == 1:
-    		go_straight_ahead(desired_position)
-    	elif state_ == 2:
-    		fix_final_yaw(des_yaw)
-    	elif state_ == 3:
-    		done()
-    		break
+        backfeed_.where = f"the robot is now at x position: {position_.x}, and y position: {position_.y}"
+        a_server_.publish_feedback(backfeed_)
+
+        if state_ == 0:
+            fix_yaw(desired_position)
+            if a_server_.is_preempt_requested():
+                break
+        elif state_ == 1:
+            go_straight_ahead(desired_position)
+            if a_server_.is_preempt_requested():
+                break
+        elif state_ == 2:
+            fix_final_yaw(des_yaw)
+            if a_server_.is_preempt_requested():
+                break
+        elif state_ == 3:
+            done()
+            result_.ok = True
+            a_server_.set_succeeded(result_)
+            break
+
     return True
 
 def main():
     global pub_
+    global a_server_
     rospy.init_node('go_to_point')
     pub_ = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
     sub_odom = rospy.Subscriber('/odom', Odometry, clbk_odom)
-    service = rospy.Service('/go_to_point', Position, go_to_point)
+    #service = rospy.Service('/go_to_point', Position, go_to_point)
+    a_server_ = actionlib.SimpleActionServer("go_to_point", GoToPointAction, execute_cb = go_to_point, auto_start=False)
+    a_server_.start()
     rospy.spin()
 
 if __name__ == '__main__':
